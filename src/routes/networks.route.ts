@@ -5,6 +5,7 @@ const router = Router();
 
 router.get("/", NetworksController.list);
 router.get("/:builderId", NetworksController.getOne);
+router.get("/:builderId/onchainFiends", NetworksController.getOnchainFriends);
 router.post("/", NetworksController.create);
 router.put("/:builderId/connections", NetworksController.setConnections);
 router.post("/:builderId/connections", NetworksController.addConnections);

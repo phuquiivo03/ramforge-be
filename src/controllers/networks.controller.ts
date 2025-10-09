@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { Types } from "mongoose";
 import { Network } from "../models/network.model";
+import friendManagerClient from "../services/onchain";
 
 function toObjectId(id: string) {
   if (!Types.ObjectId.isValid(id)) return null;
@@ -8,6 +9,12 @@ function toObjectId(id: string) {
 }
 
 export const NetworksController = {
+  getOnchainFriends: async (req: Request, res: Response) => {
+    const { builderId } = req.params;
+    const onchainFriends = await friendManagerClient.getFriends(builderId);
+    return res.status(200).json(onchainFriends);
+  },
+
   // Create a network doc for a builder
   create: async (req: Request, res: Response) => {
     const { builder, connections } = req.body as { builder: string; connections?: string[] };
