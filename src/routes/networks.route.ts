@@ -4,6 +4,7 @@ import { NetworksController } from "../controllers/networks.controller";
 const router = Router();
 
 router.get("/", NetworksController.list);
+router.post("/connect", NetworksController.connectBuilder);
 router.get("/:builderId", NetworksController.getOne);
 router.get("/:builderId/onchainFiends", NetworksController.getOnchainFriends);
 router.post("/", NetworksController.create);

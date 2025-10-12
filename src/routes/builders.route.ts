@@ -5,10 +5,51 @@ import { crawlTalentBuilders } from "../services/builderCrawler";
 
 const router = Router();
 
-// List builders
-router.get("/", async (_req, res) => {
-  const builders = await Builder.find().lean();
-  res.json(builders);
+// Search builders with pagination
+router.get("/", async (req, res) => {
+  try {
+    const { search, page = "1", limit = "10" } = req.query;
+
+    // Parse pagination parameters
+    const pageNum = Math.max(1, parseInt(page as string, 10));
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit as string, 10)));
+    const skip = (pageNum - 1) * limitNum;
+
+    // Build search query
+    let query: any = {};
+    if (search && typeof search === "string" && search.trim().length > 0) {
+      // Case-insensitive search by name
+      query.name = { $regex: search.trim(), $options: "i" };
+    }
+
+    // Execute search with pagination
+    const [builders, total] = await Promise.all([
+      Builder.find(query).skip(skip).limit(limitNum).lean(),
+      Builder.countDocuments(query),
+    ]);
+
+    // Calculate pagination info
+    const totalPages = Math.ceil(total / limitNum);
+    const hasNextPage = pageNum < totalPages;
+    const hasPrevPage = pageNum > 1;
+
+    res.json({
+      builders,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages,
+        hasNextPage,
+        hasPrevPage,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      message: "Failed to search builders",
+      error: err?.message,
+    });
+  }
 });
 
 // Get one by id (Mongo _id)
