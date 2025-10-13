@@ -1,5 +1,6 @@
 import { AddressName, IAddressName } from "../models/addressName.model";
 import { resolveBasenameToAddress } from "./utils";
+import { env } from "../config/env";
 
 export class AddressNameService {
   /**
@@ -16,6 +17,41 @@ export class AddressNameService {
   static async getNameByAddress(address: string): Promise<string | null> {
     const record = await AddressName.findOne({ address }).lean();
     return record?.name || null;
+  }
+
+  /**
+   * Resolve a display name (basename) for an address using Talent Protocol API and cache it.
+   */
+  static async resolveNameByAddress(address: string): Promise<string | null> {
+    // Check DB first
+    const existing = await this.getNameByAddress(address);
+    if (existing) return existing;
+
+    // Query Talent Protocol API
+    if (!env.talentApiKey) return null;
+    try {
+      const query = encodeURIComponent(JSON.stringify({ identity: address, exactMatch: false }));
+      console.log("query", query);
+      const url = `https://api.talentprotocol.com/search/advanced/profiles?query=${query}`;
+      const resp = await fetch(url, {
+        method: "GET",
+        headers: {
+          "x-api-key": env.talentApiKey,
+          Accept: "application/json",
+        },
+      });
+      if (!resp.ok) return null;
+      const json = (await resp.json()) as { profiles?: Array<{ name?: string }> };
+      console.log("json", json);
+      const name = json?.profiles?.[0]?.name;
+      if (name && typeof name === "string" && name.trim().length > 0) {
+        await this.storeMapping(address, name);
+        return name;
+      }
+      return null;
+    } catch (err) {
+      return null;
+    }
   }
 
   /**

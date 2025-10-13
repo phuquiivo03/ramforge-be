@@ -12,6 +12,64 @@ function toObjectId(id: string) {
 }
 
 export const NetworksController = {
+  // Get pending received requests for a builder by ObjectId -> resolve by builder.name
+  getPendingReceivedForUser: async (req: Request, res: Response) => {
+    try {
+      const userId = (req.query.userId as string) || (req.params as any)?.userId;
+      const walletAddress = (req.query.walletAddress as string) || undefined;
+      if (!userId) return res.status(400).json({ message: "userId is required" });
+
+      // If walletAddress is provided, validate and use directly
+      let userAddress: string | null = null;
+      if (walletAddress) {
+        try {
+          const { ethers } = await import("ethers");
+          if (!ethers.isAddress(walletAddress)) {
+            return res.status(400).json({ message: "Invalid walletAddress" });
+          }
+          userAddress = ethers.getAddress(walletAddress);
+        } catch (err: any) {
+          return res.status(400).json({ message: "Invalid walletAddress" });
+        }
+      } else {
+        // Fall back to builder lookup by ObjectId and resolve via builder.name
+        const oid = toObjectId(userId);
+        if (!oid) return res.status(400).json({ message: "Invalid builder id" });
+
+        const builder = await Builder.findById(oid).lean();
+        if (!builder) return res.status(404).json({ message: "Builder not found" });
+        if (!builder.name) return res.status(400).json({ message: "Builder has no name" });
+
+        userAddress = await AddressNameService.getAddressByName(builder.name);
+        if (!userAddress) {
+          userAddress = await AddressNameService.resolveAndStore(builder.name);
+        }
+        if (!userAddress) {
+          return res
+            .status(400)
+            .json({ message: `Could not resolve address for builder name: ${builder.name}` });
+        }
+      }
+
+      // Fetch pending received addresses from on-chain client
+      const pendingAddresses = await friendManagerClient.getPendingReceived(userAddress);
+
+      // Map each address to a name: prefer DB; if missing, try Talent Protocol API
+      const results = await Promise.all(
+        pendingAddresses.map(async (addr) => {
+          let name = await AddressNameService.getNameByAddress(addr);
+          if (!name) name = await AddressNameService.resolveNameByAddress(addr);
+          return { address: addr, name: name ?? null };
+        }),
+      );
+
+      return res.status(200).json({ userAddress, pending: results });
+    } catch (err: any) {
+      return res
+        .status(500)
+        .json({ message: "Failed to get pending received", error: err?.message });
+    }
+  },
   getOnchainFriends: async (req: Request, res: Response) => {
     const { builderId } = req.params;
 

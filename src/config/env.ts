@@ -9,4 +9,5 @@ export const env = {
   contractAddress: process.env.CONTRACT_ADDRESS ?? "",
   rpcUrl: process.env.RPC_URL ?? "",
   privateKey: process.env.PRIVATE_KEY ?? "",
+  talentApiKey: process.env.TALENT_PROTOCOL_API_KEY ?? "",
 } as const;
