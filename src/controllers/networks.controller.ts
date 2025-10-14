@@ -54,12 +54,13 @@ export const NetworksController = {
       // Fetch pending received addresses from on-chain client
       const pendingAddresses = await friendManagerClient.getPendingReceived(userAddress);
 
-      // Map each address to a name: prefer DB; if missing, try Talent Protocol API
+      // Map each address to a builder object (resolved via name); fallback to null if not found
       const results = await Promise.all(
         pendingAddresses.map(async (addr) => {
           let name = await AddressNameService.getNameByAddress(addr);
           if (!name) name = await AddressNameService.resolveNameByAddress(addr);
-          return { address: addr, name: name ?? null };
+          const builder = name ? await Builder.findOne({ name }).lean() : null;
+          return { address: addr, builder: builder ?? null };
         }),
       );
 
@@ -74,36 +75,38 @@ export const NetworksController = {
     const { builderId } = req.params;
 
     // Check if builderId is already a valid address
-    let builderAddress: string | null = null;
-
-    // First try to resolve as basename (ENS)
-    const resolvedAddress = await resolveBasenameToAddress(builderId);
-    if (resolvedAddress) {
-      builderAddress = resolvedAddress;
-    } else {
-      // If ENS resolution failed, check if it's already a valid address
-      try {
-        const { ethers } = await import("ethers");
-        if (ethers.isAddress(builderId)) {
-          builderAddress = ethers.getAddress(builderId);
-        }
-      } catch (err) {
-        // builderId is not a valid address
-      }
+    const builder = await Builder.findOne({ _id: toObjectId(builderId) }).lean();
+    if (!builder) {
+      return res.status(400).json({
+        message: "Invalid builder identifier. Must be a valid Ethereum address or ENS name.",
+      });
     }
-
+    const builderAddress = await AddressNameService.getAddressByName(builder.name);
     if (!builderAddress) {
       return res.status(400).json({
         message: "Invalid builder identifier. Must be a valid Ethereum address or ENS name.",
       });
     }
-
     try {
       const onchainFriends = await friendManagerClient.getFriends(builderAddress);
-      return res.status(200).json({
-        builderAddress,
-        friends: onchainFriends,
-      });
+      const friends = await Promise.all(
+        onchainFriends.map(async (friendAddr: string) => {
+          // Resolve builder by address -> name -> builder
+          let name = await AddressNameService.getNameByAddress(friendAddr);
+          if (!name) {
+            name = await AddressNameService.resolveNameByAddress(friendAddr);
+          }
+          if (!name) {
+            // If no name can be resolved, skip this friend
+            return null;
+          }
+          const ensured = await AddressNameService.ensureBuilderForName(name);
+          const builder = await Builder.findById(ensured._id).lean();
+          return builder ?? null;
+        }),
+      );
+      const builderFriends = friends.filter(Boolean);
+      return res.status(200).json({ builderAddress, friends: builderFriends });
     } catch (err: any) {
       return res.status(500).json({
         message: "Failed to fetch onchain friends",

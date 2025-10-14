@@ -1,8 +1,22 @@
 import { AddressName, IAddressName } from "../models/addressName.model";
 import { resolveBasenameToAddress } from "./utils";
 import { env } from "../config/env";
+import { Builder } from "../models/builder.model";
 
 export class AddressNameService {
+  /**
+   * Ensure a Builder exists for the given name. If not, create with a random valid location.
+   */
+  static async ensureBuilderForName(name: string) {
+    const existing = await Builder.findOne({ name });
+    if (existing) return existing;
+
+    // Generate a random valid [longitude, latitude]
+    const randomLongitude = Math.random() * 360 - 180;
+    const randomLatitude = Math.random() * 180 - 90;
+
+    return await Builder.create({ name, location: [randomLongitude, randomLatitude] });
+  }
   /**
    * Get address by name from database
    */
@@ -26,9 +40,11 @@ export class AddressNameService {
     // Check DB first
     const existing = await this.getNameByAddress(address);
     if (existing) return existing;
+    console.log("finding name by address", address);
 
     // Query Talent Protocol API
     if (!env.talentApiKey) return null;
+    console.log("talentApiKey", env.talentApiKey);
     try {
       const query = encodeURIComponent(JSON.stringify({ identity: address, exactMatch: false }));
       console.log("query", query);
@@ -43,12 +59,16 @@ export class AddressNameService {
       if (!resp.ok) return null;
       const json = (await resp.json()) as { profiles?: Array<{ name?: string }> };
       console.log("json", json);
+      if (!json?.profiles?.length) return null;
       const name = json?.profiles?.[0]?.name;
       if (name && typeof name === "string" && name.trim().length > 0) {
         await this.storeMapping(address, name);
+        await this.ensureBuilderForName(name);
         return name;
       }
-      return null;
+      await this.storeMapping(address, address);
+      
+      return address;
     } catch (err) {
       return null;
     }

@@ -2,6 +2,7 @@ import express from "express";
 import indexRoute from "./routes/index.route";
 import cors from "cors";
 import { resolveAddressToBasename, resolveBasenameToAddress } from "./services/utils";
+import friendManagerClient from "./services/onchain";
 
 const app = express();
 
