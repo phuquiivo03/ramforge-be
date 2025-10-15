@@ -194,12 +194,12 @@ router.put("/:id/social/x", async (req, res) => {
 });
 
 // Start X OAuth: returns authorization URL (PKCE: client provides codeChallenge & state)
-router.post("/:id/social/x/auth-url", async (req, res) => {
+router.get("/:id/social/x/auth-url", async (req, res) => {
   const { id } = req.params;
   const state = (req.query.state as string) || id; // tie to builder
   const challenge = generateCodeChallenge();
   const url = XService.getAuthUrl(state, challenge);
-  res.json({ url });
+  res.redirect(url);
 });
 
 // Complete X OAuth: exchange code and link to builder
@@ -235,5 +235,47 @@ router.post("/:id/social/x/oauth", async (req, res) => {
     res.json({ linked: Boolean(xUserId), xUserId, socials: doc });
   } catch (err: any) {
     res.status(400).json({ message: err?.message || "Failed to connect X" });
+  }
+});
+
+// Redirect URI callback handler for X OAuth (server-side exchange if secret configured)
+router.get("/social/x/callback", async (req, res) => {
+  try {
+    const code = req.query.code as string;
+    const state = req.query.state as string; // we expect builderId here if you used default state
+    if (!code) return res.status(400).json({ message: "code missing" });
+
+    // If we have a client secret configured, do a confidential exchange on server
+    if (process.env.X_CLIENT_SECRET) {
+      const token = await XService.exchangeCodeForTokenWithSecret(code);
+      const me = await XService.getMe(token.access_token);
+      const xUserId = me?.data?.id;
+      if (!state) return res.status(200).json({ linked: Boolean(xUserId), xUserId });
+
+      // Persist if state is builderId
+      const doc = await SocialConnect.findOneAndUpdate(
+        { builder: state },
+        {
+          $set: {
+            builder: state,
+            xAccessToken: token.access_token,
+            xRefreshToken: token.refresh_token ?? undefined,
+            xUserId: xUserId ?? undefined,
+          },
+        },
+        { new: true, upsert: true, setDefaultsOnInsert: true },
+      ).lean();
+
+      return res.status(200).json({ linked: Boolean(xUserId), xUserId, socials: doc });
+    }
+
+    // Otherwise instruct clients to POST to /:id/social/x/oauth with code_verifier
+    return res.status(200).json({
+      message: "Use POST /builders/:id/social/x/oauth with code_verifier to complete PKCE exchange",
+      code,
+      state,
+    });
+  } catch (err: any) {
+    res.status(400).json({ message: err?.message || "Callback failed" });
   }
 });
