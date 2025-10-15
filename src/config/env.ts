@@ -10,4 +10,7 @@ export const env = {
   rpcUrl: process.env.RPC_URL ?? "",
   privateKey: process.env.PRIVATE_KEY ?? "",
   talentApiKey: process.env.TALENT_PROTOCOL_API_KEY ?? "",
+  xClientId: process.env.X_CLIENT_ID ?? "",
+  xClientSecret: process.env.X_CLIENT_SECRET ?? "",
+  xRedirectUri: process.env.X_REDIRECT_URI ?? "",
 } as const;

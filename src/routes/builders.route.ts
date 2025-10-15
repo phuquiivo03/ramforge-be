@@ -2,7 +2,10 @@ import { Router } from "express";
 import { Builder } from "../models/builder.model";
 import { geocodeAddressToXY } from "../services/geocoding";
 import { crawlTalentBuilders } from "../services/builderCrawler";
-
+import { SocialConnect } from "../models/socialConnect.model";
+import { XService } from "../services/x.service";
+import { randomBytes, createHash } from "crypto";
+import { generateCodeChallenge } from "../services/utils";
 const router = Router();
 
 // Search builders with pagination
@@ -103,4 +106,134 @@ router.post("/crawl", async (req, res) => {
     perPage: perPage ? Number(perPage) : undefined,
   });
   res.json(result);
+});
+
+// Update profile by id (Mongo _id)
+router.put("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const payload = { ...req.body };
+
+    // Normalize dates
+    if (payload?.builder_score?.last_calculated_at)
+      payload.builder_score.last_calculated_at = new Date(payload.builder_score.last_calculated_at);
+    if (Array.isArray(payload?.scores)) {
+      payload.scores = payload.scores.map((s: any) => ({
+        ...s,
+        last_calculated_at: s.last_calculated_at ? new Date(s.last_calculated_at) : undefined,
+      }));
+    }
+    if (payload?.created_at) payload.created_at = new Date(payload.created_at);
+
+    // Geocode location string -> [x, y]
+    if (typeof payload?.location === "string" && payload.location.trim().length > 0) {
+      const xy = await geocodeAddressToXY(payload.location);
+      if (!xy) return res.status(400).json({ message: "Failed to geocode location" });
+      payload.location = xy;
+    }
+
+    const updated = await Builder.findByIdAndUpdate(id, { $set: payload }, { new: true }).lean();
+    if (!updated) return res.status(404).json({ message: "Not found" });
+    res.json(updated);
+  } catch (err: any) {
+    res.status(400).json({ message: err?.message || "Invalid payload" });
+  }
+});
+
+// Get social connections for a builder
+router.get("/:id/social", async (req, res) => {
+  const { id } = req.params;
+  const doc = await SocialConnect.findOne({ builder: id }).lean();
+  if (!doc) return res.status(404).json({ message: "Not found" });
+  res.json(doc);
+});
+
+// Create or update social connections for a builder (upsert)
+router.put("/:id/social", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const payload = {
+      builder: id,
+      discord: req.body?.discord,
+      x: req.body?.x,
+      telegram: req.body?.telegram,
+      github: req.body?.github,
+      google: req.body?.google,
+      farcaster: req.body?.farcaster,
+      wallet: req.body?.wallet,
+    } as any;
+
+    const doc = await SocialConnect.findOneAndUpdate(
+      { builder: id },
+      { $set: payload },
+      { new: true, upsert: true, setDefaultsOnInsert: true },
+    ).lean();
+    res.json(doc);
+  } catch (err: any) {
+    res.status(400).json({ message: err?.message || "Invalid payload" });
+  }
+});
+
+// Connect X (Twitter) for a builder (upsert only the x field)
+router.put("/:id/social/x", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const x = (req.body?.x as string) || "";
+    if (typeof x !== "string" || x.trim().length === 0)
+      return res.status(400).json({ message: "x is required" });
+
+    const doc = await SocialConnect.findOneAndUpdate(
+      { builder: id },
+      { $set: { builder: id, x: x.trim() } },
+      { new: true, upsert: true, setDefaultsOnInsert: true },
+    ).lean();
+    res.json(doc);
+  } catch (err: any) {
+    res.status(400).json({ message: err?.message || "Invalid payload" });
+  }
+});
+
+// Start X OAuth: returns authorization URL (PKCE: client provides codeChallenge & state)
+router.post("/:id/social/x/auth-url", async (req, res) => {
+  const { id } = req.params;
+  const state = (req.query.state as string) || id; // tie to builder
+  const challenge = generateCodeChallenge();
+  const url = XService.getAuthUrl(state, challenge);
+  res.json({ url });
+});
+
+// Complete X OAuth: exchange code and link to builder
+router.post("/:id/social/x/oauth", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const code = req.body?.code as string;
+    const codeVerifier = req.body?.code_verifier as string;
+    if (!code || !codeVerifier)
+      return res.status(400).json({ message: "code and code_verifier required" });
+
+    // Exchange authorization code for tokens
+    const token = await XService.exchangeCodeForToken(code, codeVerifier);
+
+    // Fetch X user profile
+    const me = await XService.getMe(token.access_token);
+    const xUserId = me?.data?.id;
+
+    // Persist link
+    const doc = await SocialConnect.findOneAndUpdate(
+      { builder: id },
+      {
+        $set: {
+          builder: id,
+          xAccessToken: token.access_token,
+          xRefreshToken: token.refresh_token ?? undefined,
+          xUserId: xUserId ?? undefined,
+        },
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true },
+    ).lean();
+
+    res.json({ linked: Boolean(xUserId), xUserId, socials: doc });
+  } catch (err: any) {
+    res.status(400).json({ message: err?.message || "Failed to connect X" });
+  }
 });

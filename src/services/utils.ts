@@ -1,4 +1,5 @@
 // getAddressFromBasename.ts
+import { createHash, randomBytes } from "crypto";
 import { createPublicClient, http, getAddress, isAddress } from "viem";
 import { mainnet, base, baseSepolia } from "viem/chains";
 
@@ -84,6 +85,11 @@ export async function resolveAddressToBasename(address: string): Promise<string 
     console.error("reverse resolve error", err);
     return null;
   }
+}
+
+export function generateCodeChallenge() {
+  const verifier = randomBytes(32).toString("base64url");
+  return createHash("sha256").update(verifier).digest("base64url");
 }
 
 // Test function to verify Viem setup

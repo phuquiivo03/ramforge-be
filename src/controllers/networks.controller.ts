@@ -78,7 +78,7 @@ export const NetworksController = {
     const builder = await Builder.findOne({ _id: toObjectId(builderId) }).lean();
     if (!builder) {
       return res.status(400).json({
-        message: "Invalid builder identifier. Must be a valid Ethereum address or ENS name.",
+        message: "Builder not found",
       });
     }
     const builderAddress = await AddressNameService.getAddressByName(builder.name);
